@@ -1,72 +1,86 @@
-# Codex OAuth Helper
+# Codex OAuth 工具
 
-Standalone Python scripts for obtaining an OpenAI Codex `refresh_token` and exporting a CPA-compatible credential JSON file.
+这是一个独立的 Python 工具，用于获取 OpenAI Codex 的 `refresh_token`，并导出 CPA 可直接使用的完整认证 JSON。
 
-## Requirements
+## 环境要求
 
-- Python 3.9 or newer
-- Tkinter (normally included with the Windows Python installer)
-- An OpenAI account that can use Codex OAuth
+- Python 3.9 或更高版本
+- Tkinter（Windows 官方 Python 安装包通常已包含）
+- 可以使用 Codex OAuth 的 OpenAI 账号
 
-The scripts use only Python's standard library. No `pip install` is required.
+脚本只使用 Python 标准库，不需要执行 `pip install`。
 
-## GUI
+## 可视化界面
 
-Run the desktop interface:
+启动桌面界面：
 
 ```powershell
 python codex_oauth_gui.py
 ```
 
-The GUI supports:
+也可以使用 `pythonw` 启动并隐藏控制台窗口：
 
-- Browser OAuth with PKCE
-- Codex device-code login
-- Refreshing an existing refresh token
-- Extracting a token from an existing CPA auth JSON file
-- HTTP/HTTPS proxy configuration
-- Copying the refresh token or complete JSON
-- Saving the complete JSON to a file
+```powershell
+pythonw codex_oauth_gui.py
+```
 
-For a proxy, enter a URL such as:
+界面支持：
+
+- 浏览器 OAuth + PKCE 登录
+- Codex 设备码登录
+- 使用已有 refresh token 刷新凭据
+- 从 CPA auth JSON 文件提取凭据
+- HTTP/HTTPS 代理
+- 复制授权地址、refresh token 和完整 JSON
+- 保存完整 CPA JSON 文件
+
+代理填写示例：
 
 ```text
 http://127.0.0.1:7890
 ```
 
-The browser flow listens on `localhost:1455`. Change the callback port only if that port is already in use.
+浏览器 OAuth 默认监听 `localhost:1455`。如果端口被占用，可以在界面中修改回调端口。
 
-## Command Line
+## 命令行用法
 
-Browser login (the default) prints only the refresh token to stdout:
+### 浏览器登录
+
+默认浏览器登录，标准输出只包含 refresh token：
 
 ```powershell
 python codex_oauth.py --proxy http://127.0.0.1:7890
 ```
 
-Device-code login:
+不自动打开浏览器：
+
+```powershell
+python codex_oauth.py --no-browser
+```
+
+### 设备码登录
 
 ```powershell
 python codex_oauth.py --device --proxy http://127.0.0.1:7890
 ```
 
-Refresh an existing token:
+### 刷新已有 token
 
 ```powershell
-python codex_oauth.py --refresh-token "YOUR_REFRESH_TOKEN"
+python codex_oauth.py --refresh-token "你的_refresh_token"
 ```
 
-Extract a token from a CPA JSON file:
+### 从 CPA 文件提取
 
 ```powershell
 python codex_oauth.py --auth-file path\to\codex.json
 ```
 
-Use `--json` to print the complete credential object and `--output path\to\codex.json` to save it.
+使用 `--json` 输出完整 JSON，使用 `--output path\to\codex.json` 保存完整凭据。
 
-## CPA JSON
+## CPA JSON 格式
 
-The exported object uses CPA's Codex credential fields:
+导出的登录结果包含 CPA Codex 所需字段：
 
 ```json
 {
@@ -81,8 +95,8 @@ The exported object uses CPA's Codex credential fields:
 }
 ```
 
-You can place the saved file in CPA's `auths` directory. The `refresh_token` is the long-lived credential; keep it private and do not commit it to a repository.
+将保存的 JSON 文件放入 CPA 的 `auths` 目录即可。具体目录取决于 CPA 的配置。
 
-## Security
+## 安全提示
 
-This tool handles login credentials and tokens. Use a trusted proxy, do not share screenshots or logs containing tokens, and protect saved JSON files with appropriate file permissions.
+`refresh_token` 是长期凭据。请勿把真实 token 提交到 Git、发送给他人或发布到截图/日志中；保存的 JSON 文件也应妥善保护。
