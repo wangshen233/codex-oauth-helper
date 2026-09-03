@@ -36,6 +36,7 @@ DEVICE_VERIFICATION_URL = "https://auth.openai.com/codex/device"
 DEVICE_REDIRECT_URI = "https://auth.openai.com/deviceauth/callback"
 AuthURLCallback = Callable[[str], None]
 DeviceCodeCallback = Callable[[str, str], None]
+BrowserOpenCallback = Callable[[str], None]
 
 
 class OAuthError(RuntimeError):
@@ -208,6 +209,7 @@ def wait_for_callback(
     no_browser: bool,
     on_auth_url: Optional[AuthURLCallback] = None,
     cancel_event: Optional[threading.Event] = None,
+    open_browser: Optional[BrowserOpenCallback] = None,
 ) -> Dict[str, str]:
     callback_queue: Queue = Queue(maxsize=1)
 
@@ -220,34 +222,42 @@ def wait_for_callback(
     except OSError as exc:
         raise OAuthError(f"cannot listen on localhost:{port}: {exc}") from exc
 
-    verifier, challenge = generate_pkce()
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
-
-    params = {
-        "client_id": CLIENT_ID,
-        "response_type": "code",
-        "redirect_uri": REDIRECT_URI.replace(":1455/", f":{port}/"),
-        "scope": "openid email profile offline_access",
-        "state": state,
-        "code_challenge": challenge,
-        "code_challenge_method": "S256",
-        "prompt": "login",
-        "id_token_add_organizations": "true",
-        "codex_cli_simplified_flow": "true",
-    }
-    auth_url = f"{AUTH_URL}?{urllib.parse.urlencode(params)}"
-    if on_auth_url:
-        on_auth_url(auth_url)
-    else:
-        print(f"Open this URL to sign in:\n{auth_url}", file=sys.stderr, flush=True)
-    if not no_browser:
-        import webbrowser
-
-        webbrowser.open(auth_url)
-
-    deadline = time.monotonic() + timeout
     try:
+        verifier, challenge = generate_pkce()
+        params = {
+            "client_id": CLIENT_ID,
+            "response_type": "code",
+            "redirect_uri": REDIRECT_URI.replace(":1455/", f":{port}/"),
+            "scope": "openid email profile offline_access",
+            "state": state,
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+            "prompt": "login",
+            "id_token_add_organizations": "true",
+            "codex_cli_simplified_flow": "true",
+        }
+        auth_url = f"{AUTH_URL}?{urllib.parse.urlencode(params)}"
+        if on_auth_url:
+            try:
+                on_auth_url(auth_url)
+            except Exception as exc:
+                raise OAuthError("cannot publish Codex authorization URL") from exc
+        else:
+            print(f"Open this URL to sign in:\n{auth_url}", file=sys.stderr, flush=True)
+        if not no_browser:
+            try:
+                if open_browser:
+                    open_browser(auth_url)
+                else:
+                    import webbrowser
+
+                    webbrowser.open(auth_url)
+            except Exception as exc:
+                raise OAuthError("cannot open browser for Codex authorization") from exc
+
+        deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if cancel_event and cancel_event.is_set():
                 raise OAuthError("authentication cancelled")
@@ -276,6 +286,7 @@ def browser_login(
     no_browser: bool,
     on_auth_url: Optional[AuthURLCallback] = None,
     cancel_event: Optional[threading.Event] = None,
+    open_browser: Optional[BrowserOpenCallback] = None,
 ) -> Dict[str, Any]:
     state = secrets.token_hex(16)
     callback = wait_for_callback(
@@ -285,6 +296,7 @@ def browser_login(
         no_browser,
         on_auth_url=on_auth_url,
         cancel_event=cancel_event,
+        open_browser=open_browser,
     )
     response = post_form(
         opener,
