@@ -37,12 +37,13 @@ class CodexOAuthApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("Codex OAuth 登录工具")
-        self.root.geometry("760x700")
-        self.root.minsize(680, 600)
+        self.root.geometry("900x780")
+        self.root.minsize(880, 760)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
         self.events: queue.Queue = queue.Queue()
         self.cancel_event = threading.Event()
+        self.closed = False
         self.worker: Optional[threading.Thread] = None
         self.credentials: Optional[Dict[str, Any]] = None
         self.last_url = ""
@@ -148,11 +149,34 @@ class CodexOAuthApp:
         ttk.Label(result_box, text="设备码:").grid(row=2, column=0, sticky="w", pady=(8, 0))
         ttk.Entry(result_box, textvariable=self.device_code, state="readonly").grid(row=2, column=1, sticky="ew", padx=(8, 0), pady=(8, 0))
         ttk.Label(result_box, text="CPA JSON:").grid(row=3, column=0, sticky="nw", pady=(12, 0))
-        self.json_text = tk.Text(result_box, height=8, wrap="none", state="disabled", relief="flat", background="#f5f5f5")
-        self.json_text.grid(row=3, column=1, columnspan=2, sticky="nsew", padx=(8, 0), pady=(12, 0))
+        json_frame = ttk.Frame(result_box)
+        json_frame.grid(row=3, column=1, columnspan=2, sticky="nsew", padx=(8, 0), pady=(12, 0))
+        json_frame.columnconfigure(0, weight=1)
+        json_frame.rowconfigure(0, weight=1)
+        self.json_text = tk.Text(
+            json_frame, height=8, wrap="none", state="disabled", relief="flat", background="#f5f5f5"
+        )
+        self.json_text.grid(row=0, column=0, sticky="nsew")
+        json_scroll = ttk.Scrollbar(json_frame, orient="vertical", command=self.json_text.yview)
+        json_scroll.grid(row=0, column=1, sticky="ns")
+        json_scroll_x = ttk.Scrollbar(json_frame, orient="horizontal", command=self.json_text.xview)
+        json_scroll_x.grid(row=1, column=0, sticky="ew")
+        self.json_text.configure(
+            xscrollcommand=json_scroll_x.set,
+            yscrollcommand=json_scroll.set,
+        )
         ttk.Button(result_box, text="复制 JSON", command=self.copy_json).grid(row=3, column=3, sticky="n", padx=(8, 0), pady=(12, 0))
-        self.log = tk.Text(result_box, height=3, wrap="word", state="disabled", relief="flat", background="#f5f5f5")
-        self.log.grid(row=4, column=0, columnspan=4, sticky="nsew", pady=(12, 0))
+        log_frame = ttk.Frame(result_box)
+        log_frame.grid(row=4, column=0, columnspan=4, sticky="nsew", pady=(12, 0))
+        log_frame.columnconfigure(0, weight=1)
+        log_frame.rowconfigure(0, weight=1)
+        self.log = tk.Text(
+            log_frame, height=3, wrap="word", state="disabled", relief="flat", background="#f5f5f5"
+        )
+        self.log.grid(row=0, column=0, sticky="nsew")
+        log_scroll = ttk.Scrollbar(log_frame, orient="vertical", command=self.log.yview)
+        log_scroll.grid(row=0, column=1, sticky="ns")
+        self.log.configure(yscrollcommand=log_scroll.set)
 
         footer = ttk.Frame(root, padding=(20, 0, 20, 16))
         footer.grid(row=2, column=0, sticky="ew")
@@ -271,16 +295,17 @@ class CodexOAuthApp:
                 credentials = refresh_token(opener, inputs["refresh"])
             else:
                 credentials = read_auth_file(inputs["auth_file"])
-            output = inputs["output"]
-            if output:
-                write_json(output, credentials)
-            self.events.put(("success", (credentials, output)))
+            if self.cancel_event.is_set():
+                raise OAuthError("authentication cancelled")
+            self.events.put(("success", (credentials, inputs["output"])))
         except OAuthError as exc:
             self.events.put(("error", str(exc)))
         except Exception as exc:  # Keep unexpected worker failures visible in the UI.
             self.events.put(("error", f"{type(exc).__name__}: {exc}"))
 
     def process_events(self) -> None:
+        if self.closed:
+            return
         try:
             while True:
                 event, payload = self.events.get_nowait()
@@ -300,9 +325,30 @@ class CodexOAuthApp:
                     self.append_log(f"设备码已生成：{code}")
                 elif event == "success":
                     credentials, output = payload
+                    if self.cancel_event.is_set():
+                        self.append_log("认证结果已取消，未显示凭据。")
+                        self.status.set("已取消")
+                        self.set_running(False)
+                        continue
+                    if output:
+                        try:
+                            write_json(output, credentials)
+                        except OAuthError as exc:
+                            self.append_log(f"保存 CPA JSON 失败：{exc}")
+                            self.status.set("失败")
+                            self.set_running(False)
+                            messagebox.showerror("保存失败", str(exc))
+                            continue
+                    if self.cancel_event.is_set():
+                        self.append_log("认证结果已取消，未显示凭据。")
+                        self.status.set("已取消")
+                        self.set_running(False)
+                        continue
                     token = str(credentials.get("refresh_token") or "").strip()
                     if not token:
                         self.append_log("错误：认证响应中没有 refresh token。")
+                        if output:
+                            self.append_log(f"凭据已写入 {output}，但其中不包含 refresh token。")
                         self.status.set("失败")
                         self.set_running(False)
                         messagebox.showerror("Codex OAuth", "认证响应中没有 refresh token")
@@ -319,11 +365,12 @@ class CodexOAuthApp:
                     self.append_log(f"错误：{payload}")
                     self.status.set("失败")
                     self.set_running(False)
-                    if payload != "authentication cancelled":
+                    if not self.cancel_event.is_set():
                         messagebox.showerror("Codex OAuth", payload)
         except queue.Empty:
             pass
-        self.root.after(100, self.process_events)
+        if not self.closed:
+            self.root.after(100, self.process_events)
 
     def set_running(self, running: bool) -> None:
         self.start_button.configure(state="disabled" if running else "normal")
@@ -395,6 +442,9 @@ class CodexOAuthApp:
         self.status.set("CPA JSON 已保存")
 
     def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
         self.cancel_event.set()
         self.root.destroy()
 
